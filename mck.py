@@ -72,12 +72,10 @@ class Entry(object):
         """
         Проверяем на просроченность данных
         """
-        if self.exptime == 0:
+        if self.exptime == 0 or self.exptime > time.time():
             return False
-        elif time.time() > self.exptime:
-            return True
         else:
-            return False
+            return True
 
     def append(self, data):
         self.data = self.data + data
@@ -172,8 +170,8 @@ class Cache(object):
     def append(cls, i):
         entry=cls.data.get_child(i.keys)
         if entry:
-            i['data'] = entry.data + i['data']
-            for res in cls.set(i): yield res
+            entry.data.append(i['data'])
+            yield "STORED"
         else:
             yield "NOT_STORED"
 
@@ -181,8 +179,8 @@ class Cache(object):
     def prepend(cls, i):
         entry = cls.data.get_child(i.keys)
         if entry:
-            i['data'] = i['data'] + entry.data 
-            for res in cls.set(i): yield res
+            entry.data.prepend(i['data'])
+            yield "STORED"
         else:
             yield "NOT_STORED"
 
