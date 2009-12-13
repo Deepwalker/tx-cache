@@ -116,83 +116,73 @@ class Cache(object):
     data = Entry(0,0,0)
 
     # cache operations
-    @classmethod
-    def call(cls, instruction):
+    def call(self, instruction):
         i = Instruction(instruction)
         debug(i)
-        command = getattr(cls,i.cmd)
+        command = getattr(self,i.cmd)
         return command(i)
 
-    @classmethod
-    def set(cls, i):
+    def set(self, i):
         "set, поддержка вложенных ключей"
-        parent = cls.data.get_child(i.keys[:-1])
+        parent = self.data.get_child(i.keys[:-1])
         if parent:
             parent.set_child(i.keys[-1], Entry(i.data,i.flags,i.exptime))
             yield "STORED"
         else:
             yield "NOT_STORED"
 
-    @classmethod
-    def get(cls, i):
+    def get(self, i):
         "get, не обрабатывает вложенные ключи"
         for key in i.keys:
-            entry = cls.data.get_child([key])
+            entry = self.data.get_child([key])
             if entry:
                 yield ' '.join(( "VALUE", key, entry.flags, str(len(entry.data)) ))
                 yield entry.data
         yield "END"
 
-    @classmethod
-    def getn(cls, i):
+    def getn(self, i):
         "get для вложенных ключей, только один за раз"
-        entry = cls.data.get_child(i.keys)
+        entry = self.data.get_child(i.keys)
         if entry:
             yield ' '.join(( "VALUE", " ".join(i.keys), entry.flags, str(len(entry.data)) ))
             yield entry.data
         yield "END"
 
-    @classmethod
-    def add(cls, i):
-        if cls.data.get_child(i.keys):
+    def add(self, i):
+        if self.data.get_child(i.keys):
             yield "NOT_STORED"
         else:
-            for res in cls.set(i): yield res
+            for res in self.set(i): yield res
 
-    @classmethod
-    def replace(cls, i):
-        entry = cls.data.get_child(i.keys)
+    def replace(self, i):
+        entry = self.data.get_child(i.keys)
         if entry:
-            for res in cls.set(i): yield res
+            for res in self.set(i): yield res
         else:
             yield "NOT_STORED"
 
-    @classmethod
-    def append(cls, i):
-        entry=cls.data.get_child(i.keys)
+    def append(self, i):
+        entry=self.data.get_child(i.keys)
         if entry:
             entry.data.append(i['data'])
             yield "STORED"
         else:
             yield "NOT_STORED"
 
-    @classmethod
-    def prepend(cls, i):
-        entry = cls.data.get_child(i.keys)
+    def prepend(self, i):
+        entry = self.data.get_child(i.keys)
         if entry:
             entry.data.prepend(i['data'])
             yield "STORED"
         else:
             yield "NOT_STORED"
 
-    @classmethod
-    def cas(cls, i):
+    def cas(self, i):
         # TODO сделать, сейчас лениво
         yield "NOT_FOUND"
 
-    @classmethod
-    def delete(cls, i):
-        entry = cls.data.get_child(i.keys)
+    def delete(self, i):
+        entry = self.data.get_child(i.keys)
         if entry:
             entry.parent.delete_child(i.key)
             yield "DELETED"
@@ -223,7 +213,7 @@ class MemcacheProtocol(LineOnlyReceiver):
 
     def process(self):
         # Cache.call возвращает генератор
-        for line in Cache.call(self.instruction):
+        for line in self.factory.cache.call(self.instruction):
             # И мы отсылаем все что он нагенерирует отдельными строками
             debug("Send line "+line)
             self.sendLine(line)
@@ -238,6 +228,7 @@ class MemcacheProtocol(LineOnlyReceiver):
 # протокола на подключение клиента, по просьбе реактора
 class MemcacheFactory(protocol.Factory):
     protocol = MemcacheProtocol
+    cache = Cache()
 
 # Запуск при помощи twistd -y %s
 application = service.Application("memcache-key")
