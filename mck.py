@@ -218,7 +218,7 @@ class MemcacheProtocol(LineOnlyReceiver):
             self.instruction['parameters']=parameters
 
             # Если данных не ожидается, то к исполнению
-            if parameters[0] in Cache.oneline_commands:
+            if parameters[0] in self.factory.cache.oneline_commands:
                 self.process()
         else:
             # Получены данные к двухстрочной команде, к исполнению
