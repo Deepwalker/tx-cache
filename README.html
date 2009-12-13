@@ -1,0 +1,146 @@
+<h4>Преамбула</h4>                                                      
+В связи с выходными потратил немного времени на реализацию сервера Memcache с использованием python-фреймворка Twisted. В итоге я получил быстродействие в два раза более низкое, что я не считаю очень критичным, а также возможность реализовать парочку расширений оригинального протокола. Также возможны оптимизации, которые еще улучшат быстродействие.                                        
+Протокол не был реализован полностью - есть еще моменты над которыми можно поработать, но стандартные set/get вполне работоспособны и готовы к использованию.                                                                                             
+
+<h4>Средства</h4>
+Для хранения кеша используем базовый класс dict. Как вы догадываетесь, реализация dict в python быстра, этот базовый тип используется в python настолько активно, что его не оставили без детальной оптимизации. Таким образом, мы автоматом имеем структуру для хранения кеша в памяти. Осталось реализовать протокол memcache, для предоставления доступа к dict другим программам.  
+
+Для реализации сервера используем Twisted. Есть множество вариаций неблокирующего IO для python на сегодня, но Twisted это уже классика, и имеет в своем арсенале достаточно средств для легкого решения подобных задач.                                  
+
+<habracut />
+
+<h4>Реализация сетевого протокола</h4>
+Как реализуют протоколы? Первым делом вам конечно же нужно найти описание протокола. Я нашел его здесь - http://code.sixapart.com/svn/memcached/trunk/server/doc/protocol.txt                                                                             
+
+После прочтения протокола становится понятно, что от клиента мы получим одну или две строки, причем первую строку мы можем смело разбивать на элементы по пробелам. Вторая строка используется в командах, которые передают серверу данные - set, add, replace и т.п. Если вам хочется подробнее вникнуть в статью, то отправлю вас почитать описание самостоятельно, цели выложить его перевод сюда не было.                                                                                                       
+
+Вооруженные этим знанием, смотрим, что нам может предложить Twisted для решения этой задачи, и сразу находим LineOnlyReceiver - протокол из базовой поставки Twisted, который работает только с протоколами, обменивающимися строками, то есть то, что надо.                                                                                                                           
+
+<font color="#ff8800">&nbsp;1 </font><font color="#ff8800">class</font>&nbsp;<font color="#00ffff">MemcacheProtocol</font>(LineOnlyReceiver):<br>                                                                                                         
+<font color="#ff8800">&nbsp;2 </font>&nbsp;&nbsp;&nbsp;&nbsp;<span style="background-color: #ffffff"><font color="#808080">&quot;&quot;&quot;</font></span><br>                                                                                           
+<font color="#ff8800">&nbsp;3 </font><font color="#ff6060">&nbsp;&nbsp;&nbsp;&nbsp;Реализует базис протокола - прием сообщений от клиента</font><br>                                                                                                      
+<font color="#ff8800">&nbsp;4 </font><font color="#ff6060">&nbsp;&nbsp;&nbsp;&nbsp;и отдачу результата.</font><br>           
+<font color="#ff8800">&nbsp;5 </font><font color="#ff6060">&nbsp;&nbsp;&nbsp;&nbsp;</font><span style="background-color: #ffffff"><font color="#808080">&quot;&quot;&quot;</font></span><br>                                                              
+<font color="#ff8800">&nbsp;6 </font><br>                                                                                    
+<font color="#ff8800">&nbsp;7 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">lineReceived</font>(self,line):&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br>                      
+<font color="#ff8800">&nbsp;8 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(repr(line))<br>                   
+<font color="#ff8800">&nbsp;9 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;<font color="#ff8800">not</font>&nbsp;<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">parameters</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>&nbsp;<font color="#ff8800">in</font>&nbsp;self.instruction:<br>                                                                                   
+<font color="#ff8800">10 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parameters = line.split(<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">&nbsp;</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>)<br>                                                     
+<font color="#ff8800">11 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">Got new command </font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>+parameters[0])<br>                                     
+<font color="#ff8800">12 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.instruction[<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">parameters</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>]=parameters<br>                                             
+<font color="#ff8800">13 </font><br>                                                                                         
+<font color="#ff8800">14 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Если данных не ожидается, то к исполнению</font><br>                                                                      
+<font color="#ff8800">15 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;parameters[0] <font color="#ff8800">in</font>&nbsp;Cache.oneline_commands:<br>                               
+<font color="#ff8800">16 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.process()<br>                                                                                                        
+<font color="#ff8800">17 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">else</font>:<br>       
+<font color="#ff8800">18 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Получены данные к двухстрочной команде, к исполнению</font><br>                                                           
+<font color="#ff8800">19 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">Got data </font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>+line)<br>                                                     
+<font color="#ff8800">20 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.instruction[<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">data</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>]=line<br>                                                         
+<font color="#ff8800">21 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.process()<br>   
+<font color="#ff8800">22 </font><br>                                                                                         
+<font color="#ff8800">23 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">process</font>(self):<br>                                                                                                             
+<font color="#ff8800">24 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Cache.call возвращает генератор</font><br>                                                                                                        
+<font color="#ff8800">25 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">for</font>&nbsp;line <font color="#ff8800">in</font>&nbsp;Cache.call(self.instruction):<br>                                                         
+<font color="#ff8800">26 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># И мы отсылаем все что он нагенерирует отдельными строками</font><br>                                                      
+<font color="#ff8800">27 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">Send line </font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>+line)<br>                                                    
+<font color="#ff8800">28 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.sendLine(line)<br>                                                                                                                           
+<font color="#ff8800">29 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Готовы к дальнейшим инструкциям, насяльника!</font><br>                                                                                           
+<font color="#ff8800">30 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.instruction={}<br>                      
+<font color="#ff8800">31 </font><br>                                                                                         
+<font color="#ff8800">32 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">connectionMade</font>(self):<br>                                                                                                      
+<font color="#ff8800">33 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">Connected!</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>)<br>                                                                                 
+<font color="#ff8800">34 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.instruction={}<br>                      
+</font>                                                                                                                      
+
+Как видно из кода, для собственно работы используется Cache. Это синглетон, по сути просто класс, методы которого обернуты декоратором @classmethod. Вызов Cache.call должен вернуть генератор, которые будет возвращать строки, которые, в свою очередь, наша реализация протокола, будет отдавать клиенту.                                                                           
+
+<h4>Разбираем запрос от клиента</h4>
+Первая строка это команда и параметры, разделенные пробелами, поэтому используем строковый метод split, и на выходе получаем список. Далее его надо разобрать на составляющие, перед тем как с данными начнет работать команда. Я использую класс, так как мне нравится перспектива обращаться к параметрам, указывая их через точку. Приведенный ниже код уже требует прочтения описания протокола, а для ленивых пара наводящих строк:                                                                            
+<pre>                                                                                                                        
+Команды записи данных:                                                                                                       
+<command name> <key> <flags> <exptime> <bytes> [noreply]\r\n                                                                 
+cas <key> <flags> <exptime> <bytes> <cas unqiue> [noreply]\r\n                                                               
+
+Получение данных:
+get <key>*\r\n   
+gets <key>*\r\n  
+delete <key>\r\n 
+
+Ну и тому подобное.
+</pre>             
+Реализация разбора:
+
+<font color="#ff8800">&nbsp;1 </font><font color="#ff8800">class</font>&nbsp;<font color="#00ffff">Instruction</font>(object):<br>                                                                                                                        
+<font color="#ff8800">&nbsp;2 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">__init__</font>(self, i):<br>                                                                                                    
+<font color="#ff8800">&nbsp;3 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;p = i[<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">parameters</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>]<br>                                                                                      
+<font color="#ff8800">&nbsp;4 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.cmd = p.pop(0)<br>                 
+<font color="#ff8800">&nbsp;5 </font><br>                                                                                    
+<font color="#ff8800">&nbsp;6 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Проверяем noreply</font><br>                                                                                                                 
+<font color="#ff8800">&nbsp;7 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;p[-1]==<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">noreply</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>:<br>                                                   
+<font color="#ff8800">&nbsp;8 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.reply=False<br>                                                                                                                         
+<font color="#ff8800">&nbsp;9 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Выкидываем его</font><br>                                                                                            
+<font color="#ff8800">10 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;p.pop(-1)<br>        
+<font color="#ff8800">11 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">else</font>:<br>       
+<font color="#ff8800">12 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.reply=True<br>  
+<font color="#ff8800">13 </font><br>                                                                                         
+<font color="#ff8800">14 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;self.cmd <font color="#ff8800">in</font>&nbsp;Cache.storage_commands:<br>                                                            
+<font color="#ff8800">15 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Если CAS то есть еще один параметр (т.е. особый случай)</font><br>                                                        
+<font color="#ff8800">16 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;self.cmd == <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">cas</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>:<br>                     
+<font color="#ff8800">17 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.unique = p.pop(-1)<br>                                                                                               
+<font color="#ff8800">18 </font><br>                                                                                         
+<font color="#ff8800">19 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># Теперь все параметры однозначны, но мы хотим расширить протокол,</font><br>                                               
+<font color="#ff8800">20 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># потому все не так просто, как dict(zip())</font><br>                                                                      
+<font color="#ff8800">21 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.bytes = p.pop(-1)<br>                                                                                                                        
+<font color="#ff8800">22 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.exptime = p.pop(-1)<br>                                                                                                                      
+<font color="#ff8800">23 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.flags = p.pop(-1)<br>                                                                                                                        
+<font color="#ff8800">24 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.keys=p<br>      
+<font color="#ff8800">25 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.data = i.get(<span style="background-color: #ffffff"><font color="#808080">'</font></span><font color="#ff6060">data</font><span style="background-color: #ffffff"><font color="#808080">'</font></span>,None)<br>                                                        
+<font color="#ff8800">26 </font><br>                                                                                         
+<font color="#ff8800">27 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># get и gets</font><br>
+<font color="#ff8800">28 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">elif</font>&nbsp;self.cmd <font color="#ff8800">in</font>&nbsp;[<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">get</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>,<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">gets</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>,<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">getn</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>,<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">delete</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>]:<br>                                    
+<font color="#ff8800">29 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.keys = p<br>    
+<font color="#ff8800">30 </font><br>                                                                                         
+<font color="#ff8800">31 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">__str__</font>(self):<br>                                                                                                             
+<font color="#ff8800">32 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">return</font>&nbsp;str(self.__dict__)<br>                                                                                                           
+</font>                                                                                                                      
+
+<h4>Реализация хранения кеша и работы с ним</h4>
+Протокол мною сразу же был расширен, а именно есть возможность работы с вложенными данными. Кеш переделан в древовидный, и все операции, которые по стандарту указывают один ключ, могут указывать список ключей, разделенных пробелами. Впрочем от этого легко избавиться, но тогда будет совсем неясен смысл работы.                                                                                     
+
+В качестве единицы хранения реализован класс Entry, в котором содержится словарь(childs типа dict) с дочерними экземплярами Entry. Более того - верхней точкой в иерархии также является экземпляр класса Entry.                                          
+
+Здесь же я приведу фрагмент синглетона Cache:
+
+<font color="#ff8800">&nbsp;1 </font><font color="#ff8800">class</font>&nbsp;<font color="#00ffff">Cache</font>(object):<br>
+<font color="#ff8800">&nbsp;2 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># consts</font><br>                      
+<font color="#ff8800">&nbsp;3 </font>&nbsp;&nbsp;&nbsp;&nbsp;storage_commands = [<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">set</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">add</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">replace</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">append</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">prepend</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>,<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">cas</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>]<br>                                                                                             
+<font color="#ff8800">&nbsp;4 </font>&nbsp;&nbsp;&nbsp;&nbsp;oneline_commands = [<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">get</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">gets</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>,<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">getn</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">delete</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">incr</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">decr</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>, <span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">stats</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span>]<br>                      
+<font color="#ff8800">&nbsp;5 </font><br>                                                                                    
+<font color="#ff8800">&nbsp;6 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># cache storage</font><br>                
+<font color="#ff8800">&nbsp;7 </font>&nbsp;&nbsp;&nbsp;&nbsp;data = Entry(0,0,0)<br>                                         
+<font color="#ff8800">&nbsp;8 </font><br>                                                                                    
+<font color="#ff8800">&nbsp;9 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#8080ff"># cache operations</font><br>             
+<font color="#ff8800">10 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff40ff">@</font><font color="#00ffff">classmethod</font><br>
+<font color="#ff8800">11 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">call</font>(cls, instruction):<br>
+<font color="#ff8800">12 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;i = Instruction(instruction)<br>
+<font color="#ff8800">13 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;debug(i)<br>
+<font color="#ff8800">14 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;command = getattr(cls,i.cmd)<br>
+<font color="#ff8800">15 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">return</font>&nbsp;command(i)<br>
+<font color="#ff8800">16 </font><br>
+<font color="#ff8800">17 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff40ff">@</font><font color="#00ffff">classmethod</font><br>
+<font color="#ff8800">18 </font>&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">def</font>&nbsp;<font color="#00ffff">set</font>(cls, i):<br>
+<font color="#ff8800">19 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">set, поддержка вложенных ключей</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><br>
+<font color="#ff8800">20 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parent = cls.data.get_child(i.keys[:-1])<br>
+<font color="#ff8800">21 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">if</font>&nbsp;parent:<br>
+<font color="#ff8800">22 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parent.set_child(i.keys[-1], Entry(i.data,i.flags,i.exptime))<br>
+<font color="#ff8800">23 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">yield</font>&nbsp;<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">STORED</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><br>
+<font color="#ff8800">24 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">else</font>:<br>
+<font color="#ff8800">25 </font>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font color="#ff8800">yield</font>&nbsp;<span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><font color="#ff6060">NOT_STORED</font><span style="background-color: #ffffff"><font color="#808080">&quot;</font></span><br>
+</font>
+
+Код Entry и всего остального смотрим тут - http://github.com/Deepwalker/tx-cache/blob/master/mck.py
+
+<h4>Отмазка</h4>
+Чего я ожидаю от этой статьи? Я ожидаю, что умные люди, которых здесь множество, посмотрят мой код и ткнут носом в недостатки отсутствия академического образования. Также, возможно, кому-то эта статья окажется полезной, при возможных недостатках, здесь описан путь к реализации сетевых протоколов в ваших программах.
+Также, кто-то может использовать этот код для своих расширений memcache.
+

@@ -34,12 +34,13 @@ class Instruction(object):
             self.bytes = p.pop(-1)
             self.exptime = p.pop(-1)
             self.flags = p.pop(-1)
-            self.keys=p
             self.data = i.get('data',None)
 
-        # get и gets
-        elif self.cmd in ["get","gets","getn"]:
-            self.keys = p
+        # incr, decr
+        elif self.cmd in ["incr","decr"]:
+            self.change_value = p.pop(-1)
+
+        self.keys = p
 
     def __str__(self):
         return str(self.__dict__)
