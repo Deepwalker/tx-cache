@@ -37,8 +37,10 @@ class Instruction(object):
             self.data = i.get('data',None)
 
         # incr, decr
-        elif self.cmd in ["incr","decr"]:
-            self.change_value = p.pop(-1)
+        elif self.cmd=="incr":
+            self.change_value = int(p.pop(-1))
+        elif self.cmd=="decr":
+            self.change_value = -int(p.pop(-1))
 
         self.keys = p
 
@@ -83,6 +85,9 @@ class Entry(object):
 
     def prepend(self, data):
         self.data = data + self.data
+
+    def change(self, data):
+        self.data = int(self.data)+data
 
     # Рекурсия
     def get_child(self, keys):
@@ -164,7 +169,7 @@ class Cache(object):
     def append(self, i):
         entry=self.data.get_child(i.keys)
         if entry:
-            entry.data.append(i['data'])
+            entry.append(i.data)
             yield "STORED"
         else:
             yield "NOT_STORED"
@@ -172,10 +177,20 @@ class Cache(object):
     def prepend(self, i):
         entry = self.data.get_child(i.keys)
         if entry:
-            entry.data.prepend(i['data'])
+            entry.prepend(i.data)
             yield "STORED"
         else:
             yield "NOT_STORED"
+
+    def change_by(self, i):
+        entry = self.data.get_child(i.keys)
+        if entry:
+            entry.change(i.change_value)
+            yield str(entry.data)
+        else:
+            yield "NOT_FOUND"
+    incr = change_by
+    decr = change_by
 
     def cas(self, i):
         # TODO сделать, сейчас лениво
