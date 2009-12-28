@@ -1,7 +1,10 @@
 #!/usr/bin/env python                                                                              
 # coding: utf-8                                                                                    
-
+"""
+MemCacheKey - фреймворк для создания memcache-велосипедов любых форм и расцветок.
+"""
 import time
+import json
 
 from twisted.internet import reactor, protocol
 from twisted.protocols.basic import LineOnlyReceiver
@@ -12,7 +15,7 @@ def debug(msg):
     log.msg(msg)
 
 class Instruction(object):
-    def __init__(self, i):
+    def __init__(self, i, cache):
         p = i['parameters']
         self.cmd = p.pop(0)
 
@@ -24,7 +27,7 @@ class Instruction(object):
         else:
             self.reply=True
 
-        if self.cmd in Cache.storage_commands:
+        if self.cmd in cache.storage_commands:
             # Если CAS то есть еще один параметр (т.е. особый случай)
             if self.cmd == "cas":
                 self.unique = p.pop(-1)
@@ -46,6 +49,51 @@ class Instruction(object):
 
     def __str__(self):
         return str(self.__dict__)
+
+class BaseCache(object):
+    storage_commands = []
+    oneline_commands = []
+
+    def call(self, instruction):
+        i = Instruction(instruction,self)
+        debug(i)
+        command = getattr(self,i.cmd)
+        return command(i)
+
+class MemcacheProtocol(LineOnlyReceiver):
+    """
+    Реализует базис протокола - прием сообщений от клиента
+    и отдачу результата.
+    """
+
+    def lineReceived(self,line):            
+        debug(repr(line))
+        if not 'parameters' in self.instruction:
+            parameters = line.split(' ')
+            debug("Got new command "+parameters[0])
+            self.instruction['parameters']=parameters
+
+            # Если данных не ожидается, то к исполнению
+            if parameters[0] in self.factory.cache.oneline_commands:
+                self.process()
+        else:
+            # Получены данные к двухстрочной команде, к исполнению
+            debug("Got data "+line)
+            self.instruction['data']=line
+            self.process()
+
+    def process(self):
+        # Cache.call возвращает генератор
+        for line in self.factory.cache.call(self.instruction):
+            # И мы отсылаем все что он нагенерирует отдельными строками
+            debug("Send line "+line)
+            self.sendLine(line)
+        # Готовы к дальнейшим инструкциям, насяльника!
+        self.instruction={}
+
+    def connectionMade(self):
+        debug("Connected!")
+        self.instruction={}
 
 class Entry(object):
     def __init__(self, data, flags, exptime):
@@ -112,21 +160,16 @@ class Entry(object):
     def delete_child(self,key):
         del self.childs[key]
 
-class Cache(object):
+class Cache(BaseCache):
     # consts
     storage_commands = ["set", "add", "replace", "append", "prepend","cas"]
-    oneline_commands = ["get", "gets","getn", "delete", "incr", "decr", "stats"]
+    oneline_commands = ["get", "gets","getn","getch","delete", "incr", "decr", "stats"]
 
     # cache storage
-    data = Entry(0,0,0)
+    def __init__(self):
+        self.data = Entry(0,0,0)
 
     # cache operations
-    def call(self, instruction):
-        i = Instruction(instruction)
-        debug(i)
-        command = getattr(self,i.cmd)
-        return command(i)
-
     def set(self, i):
         "set, поддержка вложенных ключей"
         parent = self.data.get_child(i.keys[:-1])
@@ -151,6 +194,15 @@ class Cache(object):
         if entry:
             yield ' '.join(( "VALUE", " ".join(i.keys), entry.flags, str(len(entry.data)) ))
             yield entry.data
+        yield "END"
+
+    def getch(self, i):
+        "get для вложенных ключей, только один за раз"
+        entry = self.data.get_child(i.keys)
+        if entry:
+            data = json.dumps(entry.childs.keys())
+            yield ' '.join(( "VALUE", " ".join(i.keys), entry.flags, str(len(data)) ))
+            yield data
         yield "END"
 
     def add(self, i):
@@ -197,47 +249,12 @@ class Cache(object):
         yield "NOT_FOUND"
 
     def delete(self, i):
-        entry = self.data.get_child(i.keys)
-        if entry:
-            entry.parent.delete_child(i.key)
+        parent = self.data.get_child(i.keys[:-1])
+        if parent:
+            parent.delete_child(i.keys[-1])
             yield "DELETED"
         else:
             yield "NOT_FOUND"
-
-class MemcacheProtocol(LineOnlyReceiver):
-    """
-    Реализует базис протокола - прием сообщений от клиента
-    и отдачу результата.
-    """
-
-    def lineReceived(self,line):            
-        debug(repr(line))
-        if not 'parameters' in self.instruction:
-            parameters = line.split(' ')
-            debug("Got new command "+parameters[0])
-            self.instruction['parameters']=parameters
-
-            # Если данных не ожидается, то к исполнению
-            if parameters[0] in self.factory.cache.oneline_commands:
-                self.process()
-        else:
-            # Получены данные к двухстрочной команде, к исполнению
-            debug("Got data "+line)
-            self.instruction['data']=line
-            self.process()
-
-    def process(self):
-        # Cache.call возвращает генератор
-        for line in self.factory.cache.call(self.instruction):
-            # И мы отсылаем все что он нагенерирует отдельными строками
-            debug("Send line "+line)
-            self.sendLine(line)
-        # Готовы к дальнейшим инструкциям, насяльника!
-        self.instruction={}
-
-    def connectionMade(self):
-        debug("Connected!")
-        self.instruction={}
 
 # Ну тут даже и писать то нечего - создает экземпляр 
 # протокола на подключение клиента, по просьбе реактора
